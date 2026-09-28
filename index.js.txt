@@ -1,0 +1,50 @@
+const { Client, GatewayIntentBits } = require("discord.js");
+
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+  ],
+});
+
+// Configurations
+const BOT_TOKEN = "MTU1NDAxNzQyODA4MDU2NjI5Mg.GAAtQ5.Alekg0FwlRJB9qaricxJX3Vai_P27DdtNDwclI";
+const TARGET_CHANNEL_ID = "1549854059262115972";
+
+// Replace with your Google Apps Script Web App URL (the .../exec link)
+const APPS_SCRIPT_URL = "PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE";
+
+client.once("ready", () => {
+  console.log(`Bot connected successfully as: ${client.user.tag}`);
+});
+
+client.on("messageCreate", async (message) => {
+  // Ignore messages from bots and other channels
+  if (message.author.bot || message.channel.id !== TARGET_CHANNEL_ID) return;
+
+  const payload = {
+    timestamp: message.createdAt.toISOString(),
+    author: message.author.tag || message.author.username,
+    author_id: message.author.id,
+    channel_id: message.channel.id,
+    content: message.content,
+    message_url: message.url,
+  };
+
+  try {
+    const response = await fetch(APPS_SCRIPT_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      redirect: "follow", // Follow Apps Script 302 redirects
+    });
+
+    const result = await response.json();
+    console.log(`[Synced] ${message.author.username}: "${message.content}"`, result);
+  } catch (error) {
+    console.error("Failed to push message to Google Sheets:", error);
+  }
+});
+
+client.login(BOT_TOKEN);
