@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits } = require("discord.js");
+const { Client, GatewayIntentBits, Events } = require("discord.js");
 const http = require("http");
 
 const client = new Client({
@@ -9,13 +9,18 @@ const client = new Client({
   ],
 });
 
-// Load configuration
+// Credentials
 const BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const TARGET_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID || "1549854059262115972";
 const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL;
 
+console.log("[Boot] Initializing bot...");
+console.log(`[Boot] DISCORD_BOT_TOKEN exists: ${Boolean(BOT_TOKEN)}`);
+console.log(`[Boot] APPS_SCRIPT_URL exists: ${Boolean(APPS_SCRIPT_URL)}`);
+console.log(`[Boot] TARGET_CHANNEL_ID: ${TARGET_CHANNEL_ID}`);
+
 if (!BOT_TOKEN || !APPS_SCRIPT_URL) {
-  console.error("FATAL: DISCORD_BOT_TOKEN or APPS_SCRIPT_URL is missing.");
+  console.error("FATAL: Environment variables missing on server!");
   process.exit(1);
 }
 
@@ -31,7 +36,7 @@ function markProcessed(id) {
   return false;
 }
 
-// Resilient forwarder
+// Forwarder with retries
 async function forwardMessage(message, maxAttempts = 3) {
   if (markProcessed(message.id)) return;
 
@@ -71,7 +76,7 @@ async function forwardMessage(message, maxAttempts = 3) {
 }
 
 // Real-time listener
-client.on("messageCreate", async (message) => {
+client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot || message.channel.id !== TARGET_CHANNEL_ID) return;
   await forwardMessage(message);
 });
@@ -95,13 +100,18 @@ async function catchUpAudit() {
   }
 }
 
-client.once("clientReady", () => {
-  console.log(`Bot connected as ${client.user.tag}`);
+// Fixed Ready event handler
+client.once(Events.ClientReady, (readyClient) => {
+  console.log(`✅ [Discord Ready] Bot successfully connected as ${readyClient.user.tag}`);
   catchUpAudit();
   setInterval(catchUpAudit, 60 * 1000);
 });
 
-// Global crash handlers to prevent process exit
+client.on("error", (err) => {
+  console.error("❌ [Discord Client Error]:", err);
+});
+
+// Crash guards
 process.on("unhandledRejection", (reason, promise) => {
   console.error("Unhandled Rejection at:", promise, "reason:", reason);
 });
@@ -121,4 +131,7 @@ server.listen(port, () => {
   console.log(`Server listening on port ${port}`);
 });
 
-client.login(BOT_TOKEN);
+console.log("[Boot] Logging into Discord...");
+client.login(BOT_TOKEN).catch((err) => {
+  console.error("❌ [Discord Login Rejection]:", err);
+});
