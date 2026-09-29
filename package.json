@@ -1,16 +1,12 @@
 {
-  "name": "discord-tracker-bot",
+  "name": "discord-standup-bot",
   "version": "1.0.0",
-  "description": "",
+  "description": "Discord Standup Bot to Google Sheets",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node index.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
-    "discord.js": "^14.27.0"
+    "discord.js": "^14.15.3"
   }
 }
