@@ -9,23 +9,29 @@ const client = new Client({
   ],
 });
 
-// Credentials securely loaded from environment variables
+// Load configuration
 const BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const TARGET_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID || "1549854059262115972";
-const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbyf2TKvLXrkUWVrO3_KXS-ak7taXoC4I7Q7eEtqhgKQMn9y9_jHBmCV8V-aAPZXmGAwIw/exec";
+const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL;
 
-// In-memory cache to prevent duplicate deliveries
+if (!BOT_TOKEN || !APPS_SCRIPT_URL) {
+  console.error("FATAL: DISCORD_BOT_TOKEN or APPS_SCRIPT_URL is missing.");
+  process.exit(1);
+}
+
+// In-memory deduplication set
 const processedIds = new Set();
 function markProcessed(id) {
   if (processedIds.has(id)) return true;
   processedIds.add(id);
-  if (processedIds.size > 300) {
+  if (processedIds.size > 500) {
     const oldest = processedIds.values().next().value;
     processedIds.delete(oldest);
   }
   return false;
 }
 
+// Resilient forwarder
 async function forwardMessage(message, maxAttempts = 3) {
   if (markProcessed(message.id)) return;
 
@@ -49,7 +55,7 @@ async function forwardMessage(message, maxAttempts = 3) {
 
       const res = await response.json();
       if (res.status === "success") {
-        console.log(`[Synced] ${message.author.username}: "${message.content.substring(0, 30)}..."`);
+        console.log(`[Synced] ${message.author.username}: "${message.content.substring(0, 32).replace(/\n/g, " ")}..."`);
         return;
       }
       throw new Error(res.error || "Unknown Apps Script response");
@@ -58,25 +64,25 @@ async function forwardMessage(message, maxAttempts = 3) {
       if (attempt === maxAttempts) {
         console.error(`[Dropped] Could not sync message ${message.id}`);
       } else {
-        await new Promise((r) => setTimeout(r, 1500 * attempt));
+        await new Promise((r) => setTimeout(r, 2000 * attempt));
       }
     }
   }
 }
 
-// 1. Instant real-time listener
+// Real-time listener
 client.on("messageCreate", async (message) => {
   if (message.author.bot || message.channel.id !== TARGET_CHANNEL_ID) return;
   await forwardMessage(message);
 });
 
-// 2. Periodic 1-minute fallback audit
+// Periodic catch-up audit
 async function catchUpAudit() {
   try {
     const channel = await client.channels.fetch(TARGET_CHANNEL_ID);
     if (!channel || !channel.isTextBased()) return;
 
-    const recent = await channel.messages.fetch({ limit: 10 });
+    const recent = await channel.messages.fetch({ limit: 15 });
     const chronological = Array.from(recent.values()).reverse();
 
     for (const msg of chronological) {
@@ -95,12 +101,23 @@ client.once("clientReady", () => {
   setInterval(catchUpAudit, 60 * 1000);
 });
 
-// 3. Health-check server to keep the service alive on cloud hosts
+// Global crash handlers to prevent process exit
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("Unhandled Rejection at:", promise, "reason:", reason);
+});
+
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught Exception:", err);
+});
+
+// HTTP Health Check Server
 const port = process.env.PORT || 3000;
-http.createServer((req, res) => {
+const server = http.createServer((req, res) => {
   res.writeHead(200, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ status: "healthy", timestamp: Date.now() }));
-}).listen(port, () => {
+});
+
+server.listen(port, () => {
   console.log(`Server listening on port ${port}`);
 });
 
