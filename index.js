@@ -1,5 +1,11 @@
 const { Client, GatewayIntentBits, Events } = require("discord.js");
 const http = require("http");
+const dns = require("dns");
+
+// Force IPv4 first to avoid silent IPv6 connection hangs in cloud environments
+if (dns.setDefaultResultOrder) {
+  dns.setDefaultResultOrder("ipv4first");
+}
 
 const client = new Client({
   intents: [
@@ -14,9 +20,9 @@ const BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const TARGET_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID || "1549854059262115972";
 const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL;
 
-console.log("[Boot] Initializing bot...");
-console.log(`[Boot] DISCORD_BOT_TOKEN exists: ${Boolean(BOT_TOKEN)}`);
-console.log(`[Boot] APPS_SCRIPT_URL exists: ${Boolean(APPS_SCRIPT_URL)}`);
+console.log("[Boot] Starting Discord Tracker Service...");
+console.log(`[Boot] DISCORD_BOT_TOKEN set: ${Boolean(BOT_TOKEN)}`);
+console.log(`[Boot] APPS_SCRIPT_URL set: ${Boolean(APPS_SCRIPT_URL)}`);
 console.log(`[Boot] TARGET_CHANNEL_ID: ${TARGET_CHANNEL_ID}`);
 
 if (!BOT_TOKEN || !APPS_SCRIPT_URL) {
@@ -36,7 +42,7 @@ function markProcessed(id) {
   return false;
 }
 
-// Forwarder with retries
+// Resilient forwarder
 async function forwardMessage(message, maxAttempts = 3) {
   if (markProcessed(message.id)) return;
 
@@ -100,18 +106,23 @@ async function catchUpAudit() {
   }
 }
 
-// Fixed Ready event handler
+// Gateway Events
 client.once(Events.ClientReady, (readyClient) => {
-  console.log(`✅ [Discord Ready] Bot successfully connected as ${readyClient.user.tag}`);
+  console.log(`✅ [Discord Ready] Connected as: ${readyClient.user.tag}`);
   catchUpAudit();
   setInterval(catchUpAudit, 60 * 1000);
 });
 
-client.on("error", (err) => {
-  console.error("❌ [Discord Client Error]:", err);
+client.on("debug", (info) => {
+  if (info.includes("Heartbeat") || info.includes("Session") || info.includes("Connecting")) {
+    console.log(`[Gateway Debug] ${info}`);
+  }
 });
 
-// Crash guards
+client.on("error", (err) => {
+  console.error("❌ [Client Error]:", err);
+});
+
 process.on("unhandledRejection", (reason, promise) => {
   console.error("Unhandled Rejection at:", promise, "reason:", reason);
 });
@@ -120,8 +131,8 @@ process.on("uncaughtException", (err) => {
   console.error("Uncaught Exception:", err);
 });
 
-// HTTP Health Check Server
-const port = process.env.PORT || 3000;
+// HTTP Health Check Server for cron-job.org
+const port = process.env.PORT || 10000;
 const server = http.createServer((req, res) => {
   res.writeHead(200, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ status: "healthy", timestamp: Date.now() }));
@@ -131,17 +142,7 @@ server.listen(port, () => {
   console.log(`Server listening on port ${port}`);
 });
 
-client.once("ready", (c) => {
-  console.log(`✅ [Discord Ready] Connected as: ${c.user.tag}`);
-  catchUpAudit();
-  setInterval(catchUpAudit, 60 * 1000);
-});
-
-client.on("error", (err) => {
-  console.error("❌ [Client Error]:", err);
-});
-
-console.log("[Boot] Logging into Discord...");
+console.log("[Boot] Connecting to Discord Gateway...");
 client.login(BOT_TOKEN)
-  .then(() => console.log("[Boot] Token accepted by Discord Gateway"))
-  .catch((err) => console.error("❌ [Login Failed]:", err));
+  .then(() => console.log("[Boot] Token accepted by Gateway"))
+  .catch((err) => console.error("❌ [Login Rejection]:", err));
