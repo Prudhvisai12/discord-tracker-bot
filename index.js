@@ -142,7 +142,30 @@ server.listen(port, () => {
   console.log(`Server listening on port ${port}`);
 });
 
-console.log("[Boot] Connecting to Discord Gateway...");
-client.login(BOT_TOKEN)
-  .then(() => console.log("[Boot] Token accepted by Gateway"))
-  .catch((err) => console.error("❌ [Login Rejection]:", err));
+async function startBot() {
+  console.log("[Boot] Testing Discord REST API reachability...");
+  try {
+    const res = await fetch("https://discord.com/api/v10/gateway/bot", {
+      headers: {
+        Authorization: `Bot ${BOT_TOKEN.trim()}`,
+      },
+    });
+
+    console.log(`[Boot] Discord API HTTP Status: ${res.status} ${res.statusText}`);
+    const data = await res.json();
+    console.log("[Boot] Gateway URL:", data.url);
+
+    if (res.status === 401) {
+      console.error("❌ FATAL: Token is invalid or revoked!");
+      return;
+    }
+
+    console.log("[Boot] Logging into Gateway via Client...");
+    await client.login(BOT_TOKEN.trim());
+    console.log("[Boot] Client login function resolved successfully.");
+  } catch (err) {
+    console.error("❌ [Connection Error]:", err);
+  }
+}
+
+startBot();
