@@ -131,7 +131,17 @@ server.listen(port, () => {
   console.log(`Server listening on port ${port}`);
 });
 
-console.log("[Boot] Logging into Discord...");
-client.login(BOT_TOKEN).catch((err) => {
-  console.error("❌ [Discord Login Rejection]:", err);
+client.once("ready", (c) => {
+  console.log(`✅ [Discord Ready] Connected as: ${c.user.tag}`);
+  catchUpAudit();
+  setInterval(catchUpAudit, 60 * 1000);
 });
+
+client.on("error", (err) => {
+  console.error("❌ [Client Error]:", err);
+});
+
+console.log("[Boot] Logging into Discord...");
+client.login(BOT_TOKEN)
+  .then(() => console.log("[Boot] Token accepted by Discord Gateway"))
+  .catch((err) => console.error("❌ [Login Failed]:", err));
