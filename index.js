@@ -9,16 +9,25 @@ const client = new Client({
   ],
 });
 
-const BOT_TOKEN = "MTU1NDAxNzQyODA4MDU2NjI5Mg.GAAtQ5.Alekg0FwlRJB9qaricxJX3Vai_P27DdtNDwclI";
-const TARGET_CHANNEL_ID = "1549854059262115972";
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyf2TKvLXrkUWVrO3_KXS-ak7taXoC4I7Q7eEtqhgKQMn9y9_jHBmCV8V-aAPZXmGAwIw/exec";
+// Credentials securely loaded from environment variables
+const BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
+const TARGET_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID || "1549854059262115972";
+const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbyf2TKvLXrkUWVrO3_KXS-ak7taXoC4I7Q7eEtqhgKQMn9y9_jHBmCV8V-aAPZXmGAwIw/exec";
 
-client.once("clientReady", () => {
-  console.log(`Bot connected 24/7 as: ${client.user.tag}`);
-});
+// In-memory cache to prevent duplicate deliveries
+const processedIds = new Set();
+function markProcessed(id) {
+  if (processedIds.has(id)) return true;
+  processedIds.add(id);
+  if (processedIds.size > 300) {
+    const oldest = processedIds.values().next().value;
+    processedIds.delete(oldest);
+  }
+  return false;
+}
 
-client.on("messageCreate", async (message) => {
-  if (message.author.bot || message.channel.id !== TARGET_CHANNEL_ID) return;
+async function forwardMessage(message, maxAttempts = 3) {
+  if (markProcessed(message.id)) return;
 
   const payload = {
     timestamp: message.createdAt.toISOString(),
@@ -29,25 +38,70 @@ client.on("messageCreate", async (message) => {
     message_url: message.url,
   };
 
-  try {
-    const response = await fetch(APPS_SCRIPT_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      redirect: "follow",
-    });
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const response = await fetch(APPS_SCRIPT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        redirect: "follow",
+      });
 
-    const result = await response.json();
-    console.log(`[Auto-Synced] ${message.author.username}:`, result);
-  } catch (err) {
-    console.error("Failed to push message:", err);
+      const res = await response.json();
+      if (res.status === "success") {
+        console.log(`[Synced] ${message.author.username}: "${message.content.substring(0, 30)}..."`);
+        return;
+      }
+      throw new Error(res.error || "Unknown Apps Script response");
+    } catch (err) {
+      console.warn(`[Attempt ${attempt}/${maxAttempts} Failed]: ${err.message}`);
+      if (attempt === maxAttempts) {
+        console.error(`[Dropped] Could not sync message ${message.id}`);
+      } else {
+        await new Promise((r) => setTimeout(r, 1500 * attempt));
+      }
+    }
   }
+}
+
+// 1. Instant real-time listener
+client.on("messageCreate", async (message) => {
+  if (message.author.bot || message.channel.id !== TARGET_CHANNEL_ID) return;
+  await forwardMessage(message);
 });
 
-// A dummy HTTP server so free web hosts keep it alive
+// 2. Periodic 1-minute fallback audit
+async function catchUpAudit() {
+  try {
+    const channel = await client.channels.fetch(TARGET_CHANNEL_ID);
+    if (!channel || !channel.isTextBased()) return;
+
+    const recent = await channel.messages.fetch({ limit: 10 });
+    const chronological = Array.from(recent.values()).reverse();
+
+    for (const msg of chronological) {
+      if (!msg.author.bot) {
+        await forwardMessage(msg);
+      }
+    }
+  } catch (err) {
+    console.error("[Audit Error]:", err.message);
+  }
+}
+
+client.once("clientReady", () => {
+  console.log(`Bot connected as ${client.user.tag}`);
+  catchUpAudit();
+  setInterval(catchUpAudit, 60 * 1000);
+});
+
+// 3. Health-check server to keep the service alive on cloud hosts
 const port = process.env.PORT || 3000;
-http.createServer((req, res) => res.end("Bot is running 24/7")).listen(port, () => {
-  console.log(`Health check listening on port ${port}`);
+http.createServer((req, res) => {
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ status: "healthy", timestamp: Date.now() }));
+}).listen(port, () => {
+  console.log(`Server listening on port ${port}`);
 });
 
 client.login(BOT_TOKEN);
